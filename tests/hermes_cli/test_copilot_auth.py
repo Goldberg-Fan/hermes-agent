@@ -133,6 +133,19 @@ class TestRequestHeaders:
         from hermes_cli.copilot_auth import _COPILOT_API_VERSION, copilot_request_headers
         assert copilot_request_headers()["X-GitHub-Api-Version"] == _COPILOT_API_VERSION
 
+    def test_api_version_env_override(self, monkeypatch):
+        """HERMES_COPILOT_API_VERSION overrides the pinned date without a release:
+        if GitHub retires or advances the date, users are not stuck waiting for one."""
+        from hermes_cli.copilot_auth import copilot_request_headers
+        monkeypatch.setenv("HERMES_COPILOT_API_VERSION", "2099-01-01")
+        assert copilot_request_headers()["X-GitHub-Api-Version"] == "2099-01-01"
+
+    def test_api_version_env_override_empty_ignored(self, monkeypatch):
+        """An empty override is ignored — sending an empty header would be worse than legacy."""
+        from hermes_cli.copilot_auth import _COPILOT_API_VERSION, copilot_request_headers
+        monkeypatch.setenv("HERMES_COPILOT_API_VERSION", "")
+        assert copilot_request_headers()["X-GitHub-Api-Version"] == _COPILOT_API_VERSION
+
 
     def test_no_vision_header_by_default(self):
         from hermes_cli.copilot_auth import copilot_request_headers
@@ -160,6 +173,14 @@ class TestCopilotDefaultHeaders:
         from hermes_cli.copilot_auth import _COPILOT_API_VERSION
         from hermes_cli.models import copilot_default_headers
         assert copilot_default_headers()["X-GitHub-Api-Version"] == _COPILOT_API_VERSION
+
+    def test_default_headers_honor_api_version_override(self, monkeypatch):
+        """The HERMES_COPILOT_API_VERSION override propagates through
+        copilot_default_headers()'s primary path (and from there to
+        agent_runtime_helpers._ensure_copilot_headers, which backfills from it)."""
+        from hermes_cli.models import copilot_default_headers
+        monkeypatch.setenv("HERMES_COPILOT_API_VERSION", "2099-01-01")
+        assert copilot_default_headers()["X-GitHub-Api-Version"] == "2099-01-01"
 
     def test_fallback_headers_carry_api_version(self, monkeypatch):
         """The ImportError fallback literal and the copilot_auth constant must not drift apart.
