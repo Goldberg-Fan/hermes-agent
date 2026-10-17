@@ -130,8 +130,9 @@ class TestRequestHeaders:
     def test_request_headers_declare_api_version(self):
         """Losing this header silently downgrades the catalog to legacy default-tier limits:
         long-context models resolve ~5x too small and no billing tiers are advertised (#135168)."""
-        from hermes_cli.copilot_auth import _COPILOT_API_VERSION, copilot_request_headers
-        assert copilot_request_headers()["X-GitHub-Api-Version"] == _COPILOT_API_VERSION
+        from hermes_cli.auth_constants import COPILOT_API_VERSION
+        from hermes_cli.copilot_auth import copilot_request_headers
+        assert copilot_request_headers()["X-GitHub-Api-Version"] == COPILOT_API_VERSION
 
     def test_api_version_env_override(self, monkeypatch):
         """HERMES_COPILOT_API_VERSION overrides the pinned date without a release:
@@ -142,9 +143,10 @@ class TestRequestHeaders:
 
     def test_api_version_env_override_empty_ignored(self, monkeypatch):
         """An empty override is ignored — sending an empty header would be worse than legacy."""
-        from hermes_cli.copilot_auth import _COPILOT_API_VERSION, copilot_request_headers
+        from hermes_cli.auth_constants import COPILOT_API_VERSION
+        from hermes_cli.copilot_auth import copilot_request_headers
         monkeypatch.setenv("HERMES_COPILOT_API_VERSION", "")
-        assert copilot_request_headers()["X-GitHub-Api-Version"] == _COPILOT_API_VERSION
+        assert copilot_request_headers()["X-GitHub-Api-Version"] == COPILOT_API_VERSION
 
 
     def test_no_vision_header_by_default(self):
@@ -170,9 +172,9 @@ class TestCopilotDefaultHeaders:
 
     def test_default_headers_carry_api_version(self):
         """Primary path: copilot_default_headers() delegates to copilot_request_headers()."""
-        from hermes_cli.copilot_auth import _COPILOT_API_VERSION
+        from hermes_cli.auth_constants import COPILOT_API_VERSION
         from hermes_cli.models import copilot_default_headers
-        assert copilot_default_headers()["X-GitHub-Api-Version"] == _COPILOT_API_VERSION
+        assert copilot_default_headers()["X-GitHub-Api-Version"] == COPILOT_API_VERSION
 
     def test_default_headers_honor_api_version_override(self, monkeypatch):
         """The HERMES_COPILOT_API_VERSION override propagates through
@@ -183,16 +185,21 @@ class TestCopilotDefaultHeaders:
         assert copilot_default_headers()["X-GitHub-Api-Version"] == "2099-01-01"
 
     def test_fallback_headers_carry_api_version(self, monkeypatch):
-        """The ImportError fallback literal and the copilot_auth constant must not drift apart.
+        """The ImportError fallback must carry the same Copilot fingerprint as the primary path.
 
         The fallback only runs when copilot_auth cannot be imported, so force that
         branch (a None entry in sys.modules makes the import raise ImportError);
-        asserting through the primary path never reads the literal."""
+        asserting through the primary path never reads the fallback dict. The version and
+        editor values come from the shared auth_constants module, and a missing
+        Copilot-Integration-Id 400s with model_not_available_for_integrator."""
         import sys
-        from hermes_cli.copilot_auth import _COPILOT_API_VERSION
+        from hermes_cli.auth_constants import COPILOT_API_VERSION, COPILOT_EDITOR_VERSION
         from hermes_cli.models import copilot_default_headers
         monkeypatch.setitem(sys.modules, "hermes_cli.copilot_auth", None)
-        assert copilot_default_headers()["X-GitHub-Api-Version"] == _COPILOT_API_VERSION
+        headers = copilot_default_headers()
+        assert headers["X-GitHub-Api-Version"] == COPILOT_API_VERSION
+        assert headers["Editor-Version"] == COPILOT_EDITOR_VERSION
+        assert headers["Copilot-Integration-Id"] == "vscode-chat"
 
 
 class TestEnvVarOrder:

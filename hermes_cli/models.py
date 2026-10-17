@@ -3,7 +3,8 @@
 Origin module; cohesive clusters live in siblings and are re-imported here so
 ``hermes_cli.models.<name>`` stays the stable import/monkeypatch surface:
 ``models_catalog_static`` (curated tables, provider registry, aliases), ``models_reasoning_caps``,
-``models_local`` (Ollama / LM Studio), ``models_pricing``, ``models_validate``.
+``models_local`` (Ollama / LM Studio), ``models_copilot`` (Copilot catalog filtering),
+``models_pricing``, ``models_validate``.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 from hermes_cli.route_identity import normalize_route_base_url
 from hermes_cli.urllib_security import open_credentialed_url
 from hermes_cli.version_info import get_version_info
+from hermes_cli.auth_constants import COPILOT_API_VERSION, COPILOT_EDITOR_VERSION
 from hermes_cli.models_catalog_static import (
     CuratedFallbackModels,
     CANONICAL_PROVIDERS,
@@ -50,6 +52,7 @@ from hermes_cli.models_catalog_static import (
     _PROVIDER_RETIRED_ALIASES,
     _SILENT_DEFAULT_PROVIDERS,
     _xai_finalize_catalog)
+from hermes_cli.models_copilot import _copilot_catalog_item_is_text_model
 from hermes_cli.models_reasoning_caps import (
     _OPENROUTER_CATALOG_URL,
     _seed_reasoning_caps)
@@ -73,7 +76,6 @@ _HERMES_USER_AGENT = f"hermes-cli/{get_version_info().base_version}"
 
 COPILOT_BASE_URL = "https://api.githubcopilot.com"
 COPILOT_MODELS_URL = f"{COPILOT_BASE_URL}/models"
-COPILOT_EDITOR_VERSION = "vscode/1.104.1"
 COPILOT_REASONING_EFFORTS_GPT5 = ["minimal", "low", "medium", "high"]
 COPILOT_REASONING_EFFORTS_O_SERIES = ["low", "medium", "high"]
 
@@ -2292,16 +2294,14 @@ def copilot_default_headers(*, is_agent_turn: bool = True) -> dict[str, str]:
         return {
             "Editor-Version": COPILOT_EDITOR_VERSION,
             "User-Agent": "HermesAgent/1.0",
-            # Copilot-backend version; a SEPARATE namespace from GitHub REST dates —
-            # see copilot_auth._COPILOT_API_VERSION. Keep in sync with that constant.
-            "X-GitHub-Api-Version": "2026-08-01",
+            "X-GitHub-Api-Version": COPILOT_API_VERSION,
+            "Copilot-Integration-Id": "vscode-chat",
             "Openai-Intent": "conversation-edits",
             "x-initiator": "agent" if is_agent_turn else "user"}
 
 
 def _copilot_text_models(items: list[dict[str, Any]], *, ignore_picker_flag: bool = False) -> list[dict[str, Any]]:
     """Chat-capable catalog rows, deduped by id, in catalog order."""
-    from hermes_cli.models_copilot import _copilot_catalog_item_is_text_model
     models: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for item in items:

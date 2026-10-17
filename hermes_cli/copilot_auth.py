@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from hermes_cli._subprocess_compat import IS_WINDOWS, windows_hide_flags
+from hermes_cli.auth_constants import COPILOT_API_VERSION, COPILOT_EDITOR_VERSION
 from utils import atomic_json_write
 
 logger = logging.getLogger(__name__)
@@ -218,31 +219,16 @@ _jwt_cache: dict[str, tuple[str, float, Optional[str]]] = {}
 _JWT_REFRESH_MARGIN_SECONDS = 120  # refresh 2 min before expiry
 # Exchange endpoint and headers (matching VS Code / Copilot CLI)
 _TOKEN_EXCHANGE_URL = "https://api.github.com/copilot_internal/v2/token"
-_EDITOR_VERSION = "vscode/1.104.1"
 _EXCHANGE_USER_AGENT = "GitHubCopilotChat/0.26.7"
-# The Copilot API serves versioned responses per client: without this header, /models reports
-# legacy default-tier limits (claude-opus-5.5 as 200K with no billing tiers), so Hermes
-# resolves long-context models ~5x too small. Matches what official clients declare.
-# Copilot exposes no version/deprecation/sunset headers and no versions endpoint, so the
-# date cannot be discovered at runtime — it must stay a pinned constant.
-# NOTE: GitHub REST (api.github.com) and the Copilot backend (api.githubcopilot.com) use
-# SEPARATE version namespaces that reject each other's dates — REST 400s on this value,
-# and the Copilot backend 400s "invalid apiVersion" on REST-supported dates such as
-# 2026-03-10 (both directions verified live in #126897). Never send this header to
-# api.github.com — the token exchange included — and do not "fix" the date to a
-# REST-supported value.
-_COPILOT_API_VERSION = "2026-08-01"
 
-# Escape hatch: if GitHub retires or advances the pinned date, point at another version
-# without waiting for a release. The constant stays the default — it is a compatibility
-# contract with the API, not a preference. Read at call time so a changed value applies
-# without re-import (and the ImportError fallback in models.py intentionally keeps the
-# literal: it exists precisely for when this module cannot be imported).
+# Escape hatch: if GitHub retires or advances the pinned date (COPILOT_API_VERSION in
+# auth_constants — the version-namespace caveat lives there), point at another version
+# without waiting for a release. Read at call time so a changed value applies without re-import.
 _API_VERSION_ENV_VAR = "HERMES_COPILOT_API_VERSION"
 
 
 def _copilot_api_version() -> str:
-    return os.environ.get(_API_VERSION_ENV_VAR) or _COPILOT_API_VERSION
+    return os.environ.get(_API_VERSION_ENV_VAR) or COPILOT_API_VERSION
 
 # Transient-failure hardening: gateway startup races network readiness, and a single-shot
 # exchange failing there silently degrades to the RAW GitHub token, whose integrator allowlist
@@ -481,7 +467,7 @@ def _exchange_copilot_token_locked(
     req = urllib.request.Request(
         _TOKEN_EXCHANGE_URL, method="GET",
         headers={"Authorization": f"token {raw_token}", "User-Agent": _EXCHANGE_USER_AGENT,
-                 "Accept": "application/json", "Editor-Version": _EDITOR_VERSION})
+                 "Accept": "application/json", "Editor-Version": COPILOT_EDITOR_VERSION})
     data = _fetch_exchange_with_retry(req, timeout, fp)
     api_token = data.get("token", "")
     if not api_token:
@@ -525,7 +511,7 @@ def get_copilot_api_token(raw_token: str) -> tuple[str, Optional[str]]:
 def copilot_request_headers(
     *, is_agent_turn: bool = True, is_vision: bool = False) -> dict[str, str]:
     """Build the standard headers for Copilot API requests."""
-    headers: dict[str, str] = {"Editor-Version": _EDITOR_VERSION, "User-Agent": "HermesAgent/1.0",
+    headers: dict[str, str] = {"Editor-Version": COPILOT_EDITOR_VERSION, "User-Agent": "HermesAgent/1.0",
                                "X-GitHub-Api-Version": _copilot_api_version(),
                                "Copilot-Integration-Id": "vscode-chat",
                                "Openai-Intent": "conversation-edits",
