@@ -134,20 +134,6 @@ class TestRequestHeaders:
         from hermes_cli.copilot_auth import copilot_request_headers
         assert copilot_request_headers()["X-GitHub-Api-Version"] == COPILOT_API_VERSION
 
-    def test_api_version_env_override(self, monkeypatch):
-        """HERMES_COPILOT_API_VERSION overrides the pinned date without a release:
-        if GitHub retires or advances the date, users are not stuck waiting for one."""
-        from hermes_cli.copilot_auth import copilot_request_headers
-        monkeypatch.setenv("HERMES_COPILOT_API_VERSION", "2099-01-01")
-        assert copilot_request_headers()["X-GitHub-Api-Version"] == "2099-01-01"
-
-    def test_api_version_env_override_empty_ignored(self, monkeypatch):
-        """An empty override is ignored — sending an empty header would be worse than legacy."""
-        from hermes_cli.auth_constants import COPILOT_API_VERSION
-        from hermes_cli.copilot_auth import copilot_request_headers
-        monkeypatch.setenv("HERMES_COPILOT_API_VERSION", "")
-        assert copilot_request_headers()["X-GitHub-Api-Version"] == COPILOT_API_VERSION
-
 
     def test_no_vision_header_by_default(self):
         from hermes_cli.copilot_auth import copilot_request_headers
@@ -176,14 +162,6 @@ class TestCopilotDefaultHeaders:
         from hermes_cli.models import copilot_default_headers
         assert copilot_default_headers()["X-GitHub-Api-Version"] == COPILOT_API_VERSION
 
-    def test_default_headers_honor_api_version_override(self, monkeypatch):
-        """The HERMES_COPILOT_API_VERSION override propagates through
-        copilot_default_headers()'s primary path (and from there to
-        agent_runtime_helpers._ensure_copilot_headers, which backfills from it)."""
-        from hermes_cli.models import copilot_default_headers
-        monkeypatch.setenv("HERMES_COPILOT_API_VERSION", "2099-01-01")
-        assert copilot_default_headers()["X-GitHub-Api-Version"] == "2099-01-01"
-
     def test_fallback_headers_carry_api_version(self, monkeypatch):
         """The ImportError fallback must carry the same Copilot fingerprint as the primary path.
 
@@ -200,6 +178,57 @@ class TestCopilotDefaultHeaders:
         assert headers["X-GitHub-Api-Version"] == COPILOT_API_VERSION
         assert headers["Editor-Version"] == COPILOT_EDITOR_VERSION
         assert headers["Copilot-Integration-Id"] == "vscode-chat"
+
+
+class TestCopilotApiVersionConfig:
+    """``model.copilot_api_version`` in config.yaml overrides the pinned Copilot API date — the
+    sanctioned escape hatch when GitHub retires or advances the version (behaviour belongs in
+    config.yaml per the repo's env-var policy, and it is profile-scoped under multiplex). Values
+    are stripped; a value that is not a YYYY-MM-DD date warns and falls back to the pin (the
+    Copilot backend 400s "invalid apiVersion" on wrong-namespace dates, verified in #126897)."""
+
+    @staticmethod
+    def _set_config(tmp_path, monkeypatch, value):
+        import json
+        from pathlib import Path
+        home = tmp_path / ".hermes"
+        home.mkdir(exist_ok=True)
+        monkeypatch.setenv("HERMES_HOME", str(home))
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        # A JSON string is a valid double-quoted YAML scalar, so inner whitespace survives.
+        (home / "config.yaml").write_text(
+            "model:\n  copilot_api_version: " + json.dumps(value) + "\n", encoding="utf-8")
+
+    def test_config_override_sets_header(self, tmp_path, monkeypatch):
+        self._set_config(tmp_path, monkeypatch, "2026-09-01")
+        from hermes_cli.copilot_auth import copilot_request_headers
+        assert copilot_request_headers()["X-GitHub-Api-Version"] == "2026-09-01"
+
+    def test_config_override_whitespace_stripped(self, tmp_path, monkeypatch):
+        self._set_config(tmp_path, monkeypatch, " 2026-09-01 ")
+        from hermes_cli.copilot_auth import copilot_request_headers
+        assert copilot_request_headers()["X-GitHub-Api-Version"] == "2026-09-01"
+
+    def test_config_override_invalid_falls_back(self, tmp_path, monkeypatch, caplog):
+        self._set_config(tmp_path, monkeypatch, "2026-3-10")
+        from hermes_cli.auth_constants import COPILOT_API_VERSION
+        from hermes_cli.copilot_auth import copilot_request_headers
+        with caplog.at_level("WARNING", logger="hermes_cli.copilot_auth"):
+            version = copilot_request_headers()["X-GitHub-Api-Version"]
+        assert version == COPILOT_API_VERSION
+        assert "copilot_api_version" in caplog.text
+
+    def test_fallback_ignores_config_override(self, tmp_path, monkeypatch):
+        """The ImportError fallback is a static degraded mode: it pins the shared constant and
+        never reads config. Asserting a live override does NOT reach it also proves the
+        sys.modules trick really forced the fallback branch (the primary path would have
+        returned the override)."""
+        import sys
+        self._set_config(tmp_path, monkeypatch, "2026-09-01")
+        from hermes_cli.auth_constants import COPILOT_API_VERSION
+        from hermes_cli.models import copilot_default_headers
+        monkeypatch.setitem(sys.modules, "hermes_cli.copilot_auth", None)
+        assert copilot_default_headers()["X-GitHub-Api-Version"] == COPILOT_API_VERSION
 
 
 class TestEnvVarOrder:

@@ -222,13 +222,34 @@ _TOKEN_EXCHANGE_URL = "https://api.github.com/copilot_internal/v2/token"
 _EXCHANGE_USER_AGENT = "GitHubCopilotChat/0.26.7"
 
 # Escape hatch: if GitHub retires or advances the pinned date (COPILOT_API_VERSION in
-# auth_constants — the version-namespace caveat lives there), point at another version
-# without waiting for a release. Read at call time so a changed value applies without re-import.
-_API_VERSION_ENV_VAR = "HERMES_COPILOT_API_VERSION"
+# auth_constants — the version-namespace caveat lives there), point at another version via
+# ``model.copilot_api_version`` in config.yaml (``hermes config set model.copilot_api_version
+# <date>``) — no release needed, and profile-scoped under the multiplex gateway. The override
+# applies to newly built Copilot clients (client construction bakes default_headers); a
+# running gateway picks it up fully on restart. Values must be a YYYY-MM-DD date: the Copilot
+# backend 400s "invalid apiVersion" on anything else, so a malformed value warns and falls
+# back to the pin instead of poisoning every request.
+_API_VERSION_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def _copilot_api_version() -> str:
-    return os.environ.get(_API_VERSION_ENV_VAR) or COPILOT_API_VERSION
+    override = ""
+    try:
+        from hermes_cli.config import load_config_readonly
+        model_cfg = load_config_readonly().get("model")
+        if isinstance(model_cfg, dict):
+            override = str(model_cfg.get("copilot_api_version") or "").strip()
+    except Exception:
+        # Fail open to the pinned date: an auth-path header builder must not crash because
+        # config.yaml is unreadable (the loader has its own last-good recovery for that).
+        logger.debug("model.copilot_api_version: config read failed; using pinned date",
+                     exc_info=True)
+        override = ""
+    if override and not _API_VERSION_DATE_RE.fullmatch(override):
+        logger.warning("model.copilot_api_version=%r is not a YYYY-MM-DD date; using pinned %s",
+                       override, COPILOT_API_VERSION)
+        return COPILOT_API_VERSION
+    return override or COPILOT_API_VERSION
 
 # Transient-failure hardening: gateway startup races network readiness, and a single-shot
 # exchange failing there silently degrades to the RAW GitHub token, whose integrator allowlist
