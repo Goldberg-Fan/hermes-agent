@@ -225,6 +225,12 @@ _EXCHANGE_USER_AGENT = "GitHubCopilotChat/0.26.7"
 # resolves long-context models ~5x too small. Matches what official clients declare.
 # Copilot exposes no version/deprecation/sunset headers and no versions endpoint, so the
 # date cannot be discovered at runtime — it must stay a pinned constant.
+# NOTE: GitHub REST (api.github.com) and the Copilot backend (api.githubcopilot.com) use
+# SEPARATE version namespaces that reject each other's dates — REST 400s on this value,
+# and the Copilot backend 400s "invalid apiVersion" on REST-supported dates such as
+# 2026-03-10 (both directions verified live in #126897). Never send this header to
+# api.github.com — the token exchange included — and do not "fix" the date to a
+# REST-supported value.
 _COPILOT_API_VERSION = "2026-08-01"
 
 # Escape hatch: if GitHub retires or advances the pinned date, point at another version
